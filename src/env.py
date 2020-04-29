@@ -1,0 +1,263 @@
+'''
+topology optimization
+
+2D only for now
+'''
+
+import numpy as np
+import math
+
+from suAI.misc import debug
+from suAI.mas import agent
+
+class ActionPool(object):
+    def __init__(self):
+        pass
+    def set_parent(self, parent):
+        self.parent = parent
+    def add_func(self, func):
+        f = classmethod(func)
+        setattr(self, 'ACT_'+func.__name__, func)
+    def get_acts(self):
+        func_list = dir(self)
+        func_list = [i for i in func_list if i[:4]=="ACT_"]
+        return func_list
+    def run(self, method_name, agt):
+        getattr(self, "ACT_"+method_name)(agt)  
+        
+# test: to be added into ActionPool()
+def test_update(agt):
+    nely, nelx = agt.env.x.shape
+    (elx, ely) = agt.pos
+    # ugly hardwired constants to fix later
+    xmin = agt.env.constraint.density_min()
+    xmax = agt.env.constraint.density_max()  
+
+    x = agt.env.x[ely, elx]
+    dc = agt.env.dc[ely,elx]
+    move = 0.2 * xmax
+    l1 = 0
+    l2 = 100000
+    lt = 1e-4        
+    
+    x_below = np.maximum(xmin, x - move)
+    x_above = np.minimum(xmax, x + move)
+    lmid = 0.5*(l2+l1)
+    
+    xnew = np.multiply(x, np.sqrt(-dc/lmid))
+    xnew = np.maximum(x_below, np.minimum(x_above, xnew))
+    agt.env.x[ely,elx] = xnew
+      
+    
+class AgentSIMP(agent.Agent):
+    def __init__(self):
+        super().__init__()
+        self.x = 0
+        self.dc = 0
+    def sense(self, name):
+        pass
+    def make_decision(self):
+        return ["test_update"]
+    def act(self):
+        re = self.make_decision()
+        for i in re:
+            self.acts.run(i,self)
+
+class Environment(object):
+    
+    '''
+    young: young's modulus
+    poisson: poisson ratio
+    '''
+    def __init__(self, fesolver, young = 1, poisson = 0.3, verbose = False):
+        self.fesolver = fesolver
+        self.young = young
+        self.poisson = poisson
+        self.dim = 2
+        self.verbose = verbose
+        self.x = []
+        self.agts = {}
+        self.func_pool = ActionPool()
+        self.func_pool.set_parent(self)
+        
+        # test action adding
+        self.func_pool.add_func(test_update)
+    
+    def bind(self, kb):
+        nelx, nely = self.x.shape 
+        self.agts = {}
+        for ely in range(nely):
+            for elx in range(nelx):
+                a = AgentSIMP()                
+                a.set_acts(self.func_pool)   # dynamic define act 
+                a.set_knowledge_engine(kb)
+                a.set_environment(self)
+                a.bind_pos((ely,elx))               
+                self.agts[(ely,elx)] = a   
+                
+        return
+    def update(self, x, dc):
+        self.x = x
+        self.dc = dc
+    # topology optimization
+    def evolve(self, load, constraint, x, penal, rmin, delta, loopy, history = False):
+
+        loop = 0 # number of loop iterations
+        change = 1.0 # maximum density change from prior iteration
+        self.load = load
+        self.constraint = constraint
+        
+        if history:
+            x_history = [x]
+
+        while (change > delta) and (loop < loopy):
+            loop = loop + 1
+            x, change = self.iter(load, constraint, x, penal, rmin)         
+            if self.verbose: print('iteration ', loop, ', change ', change, flush = True)
+            if history: x_history.append(x)
+            ## debug
+            debug.save_img(255 - x, "r:/output%d.png" % loop)
+          
+        # done
+        if history:
+            return x, x_history
+        else:
+            return x, loop
+
+    # initialization
+    def init(self, load, constraint):
+        (nelx, nely) = load.shape()
+        # mean density
+        self.x = np.ones((nely, nelx))*constraint.volume_frac()
+        # set up and binding agents with environment & KE
+        self.bind(None)        
+        
+        return self.x
+
+    # iteration
+    def iter(self, load, constraint, x, penal, rmin):
+
+        xold = x.copy()
+
+        # element stiffness matrix
+        ke = self.lk(self.young, self.poisson)
+
+        # displacement via finite element analysis
+        u = self.fesolver.displace(load, x, ke, penal)
+
+        # compliance and derivative
+        c, dc = self.comp(load, x, u, ke, penal)
+
+        # filter
+        dc = self.filt(x, rmin, dc)
+
+        # update
+        x = self.update_agent(constraint, x, dc)
+
+        # how much has changed?
+        change = np.amax(abs(x-xold))
+        return x, change
+    
+    # compliance and its derivative
+    def comp(self, load, x, u, ke, penal):
+        c = 0
+        dc = np.zeros(x.shape)
+
+        nely, nelx = x.shape
+        for ely in range(nely):
+            for elx in range(nelx):
+                ue = u[load.edofOld(elx, ely, nelx, nely)]
+                ce = np.dot(ue.transpose(), np.dot(ke, ue))
+                c = c + (x[ely,elx]**penal)*ce
+                dc[ely,elx] = -penal*(x[ely,elx]**(penal-1))*ce
+
+        return c, dc
+
+    # filter
+    def filt(self, x, rmin, dc):
+        rminf = math.floor(rmin)
+
+        dcn = np.zeros(x.shape)
+        nely, nelx = x.shape
+
+        for i in range(nelx):
+            for j in range(nely):
+                sum = 0.0
+                for k in range(max(i-rminf, 0), min(i+rminf+1, nelx)):
+                    for l in range(max(j-rminf, 0), min(j+rminf+1, nely)):
+                        weight = max(0, rmin - math.sqrt((i-k)**2+(j-l)**2));
+                        sum = sum + weight;
+                        dcn[j,i] = dcn[j,i] + weight*x[l,k]*dc[l,k];
+            
+                dcn[j,i] = dcn[j,i]/(x[j,i]*sum);
+
+        return dcn
+    
+    # optimality criteria update
+    def update_oc(self, constraint, x, dc):
+        volfrac = constraint.volume_frac()
+        xmin = constraint.density_min()
+        xmax = constraint.density_max()
+
+        # ugly hardwired constants to fix later
+        move = 0.2 * xmax
+        l1 = 0
+        l2 = 100000
+        lt = 1e-4
+
+        nely, nelx = x.shape
+        while (l2-l1 > lt):
+            lmid = 0.5*(l2+l1)
+            xnew = np.multiply(x, np.sqrt(-dc/lmid))
+
+            x_below = np.maximum(xmin, x - move)
+            x_above = np.minimum(xmax, x + move)
+            xnew = np.maximum(x_below, np.minimum(x_above, xnew));
+
+            if (np.sum(xnew) - volfrac*nelx*nely) > 0:
+                l1 = lmid
+            else:
+                l2 = lmid
+
+        return xnew    
+
+    # update by multiple agents
+    def update_agent(self, constraint, x, dc, kb=""):
+        volfrac = constraint.volume_frac()
+        xmin = constraint.density_min()
+        xmax = constraint.density_max()
+        self.x = x
+        self.dc = dc
+    
+        # ugly hardwired constants to fix later
+        move = 0.2 * xmax
+        l1 = 0
+        l2 = 100000
+        lt = 1e-4            
+        
+        ## evolve
+        for a in self.agts.values():
+            a.act()  # (1)sense (2)decite (3)act        
+        xnew = self.x
+        return xnew
+
+    # element (local) stiffness matrix
+    def lk(self, young, poisson):
+        e = young
+        nu = poisson
+        k = np.array([1/2-nu/6,1/8+nu/8,-1/4-nu/12,-1/8+3*nu/8,-1/4+nu/12,-1/8-nu/8,nu/6,1/8-3*nu/8])
+        ke = e/(1-nu**2)* \
+            np.array([ [k[0], k[1], k[2], k[3], k[4], k[5], k[6], k[7]],
+                       [k[1], k[0], k[7], k[6], k[5], k[4], k[3], k[2]],
+                       [k[2], k[7], k[0], k[5], k[6], k[3], k[4], k[1]],
+                       [k[3], k[6], k[5], k[0], k[7], k[2], k[1], k[4]],
+                       [k[4], k[5], k[6], k[7], k[0], k[1], k[2], k[3]],
+                       [k[5], k[4], k[3], k[2], k[1], k[0], k[7], k[6]],
+                       [k[6], k[3], k[4], k[1], k[2], k[7], k[0], k[5]],
+                       [k[7], k[2], k[1], k[4], k[3], k[6], k[5], k[0]] ]);
+
+        return ke
+
+
+if __name__ == "__main__":
+    pass
