@@ -80,7 +80,13 @@ class Load(object):
 
     def freedofs(self):
         return self.alldofs()    
-
+    
+    def u_matrix(self, u):
+        '''
+        u is a dim*(nely+1)*(nelx+1)... list
+        u_matrix convert gen
+        '''
+        pass
 
 # example loading scenario, half mbb-beam
 class HalfBeam(Load):
@@ -92,7 +98,7 @@ class HalfBeam(Load):
         # downward force at the upper left corner
         #f[self.dim-1] = -1.0
         #f[(self.nely+1)*self.nelx*2+1]= -1.0
-        cols = 15
+        cols = 90
         f[(self.nely+1)*2*cols+1]= -1.0
         return f
 

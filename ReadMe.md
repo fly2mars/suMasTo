@@ -13,10 +13,13 @@ python visprob.py
 
 * Evolution
 ```
-python masto.py
+python runto.py --optimizer [oc | mas]
 ```
+| |OC|2 rules MAS|
+|---:|:-------:|:------------------------: |
+|Congestion|<img src="doc/oc_congestion.png" alt="mas conges"  width="200" />|<img src="doc/singlerule_congestion.png" alt="mas conges"  width="200" />|
+|Structure|<img src="doc/oc_topopt.gif" alt="mas conges"  width="200" />|<img src="doc/mas_topopt.gif" alt="mas conges"  width="200" />|
 
-![](doc/to-15.gif)
 
 ### Rule template
-* Comming soon...
+Coming soon...

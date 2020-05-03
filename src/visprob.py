@@ -142,8 +142,7 @@ class VisConvergenceTrend(object):
     def gen_trend(self):   
         if len(self.x_history) == 0:
             return
-        covg = suFuncStack.convergence(3)
-        ori = np.sum(self.x_history[0])
+        covg = suFuncStack.convergence(5)
         for v in self.x_history:
             covg.add_data(v)
         X, Y = covg.get_data()   
@@ -159,6 +158,7 @@ class VisConvergenceTrend(object):
         plt.ylabel(self.y_label)
         plt.grid()   
         plt.show()
+        #print(Y)
         
 if __name__ == "__main__":
     # input parameters
@@ -189,4 +189,5 @@ if __name__ == "__main__":
         
     covg = VisConvergenceTrend(X, x)
     covg.draw()
+
    

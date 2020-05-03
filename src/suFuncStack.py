@@ -64,11 +64,11 @@ class convergence():
             self.diffs.add_data(congv)
             self.listy.append(self.diffs.mean()) 
     
-    def is_convergence(self):
-        mean = self.diffs.mean()
-        print(mean)
-        if mean < 0.00001:
-            return True
+    def is_convergence(self):  
+        if self.data.len() == 2:
+            dif = self.diffs[-1]
+            if dif < 0.00001:
+                return True
         return False
     
     def get_data(self):
@@ -87,4 +87,13 @@ if __name__ == "__main__":
         
         d.flush()
         print(d.mean())
+    
+    covg = convergence(3)   
+    print(covg.is_convergence())
+    for i in range(3):
+        x = np.random.random([3,3])
+        covg.add_data(x)
+        print(covg.is_convergence())
+        
+        
         

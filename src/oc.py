@@ -8,61 +8,8 @@ import numpy as np
 import math
 
 import suFuncStack 
-from suAI.misc import debug
-from suAI.mas import agent
 
-class ActionPool(object):
-    def __init__(self):
-        pass
-    def set_parent(self, parent):
-        self.parent = parent
-    def add_func(self, func):
-        f = classmethod(func)
-        setattr(self, 'ACT_'+func.__name__, func)
-    def get_acts(self):
-        func_list = dir(self)
-        func_list = [i for i in func_list if i[:4]=="ACT_"]
-        return func_list
-    def run(self, method_name, agt):
-        getattr(self, "ACT_"+method_name)(agt)  
-        
-# test: to be added into ActionPool()
-def test_update(agt):
-    nely, nelx = agt.env.x.shape
-    (elx, ely) = agt.pos
-    # ugly hardwired constants to fix later
-    xmin = agt.env.constraint.density_min()
-    xmax = agt.env.constraint.density_max()  
-
-    x = agt.env.x[ely, elx]
-    dc = agt.env.dc[ely,elx]
-    move = 0.03 * xmax
-    
-    # if dc > 2/3 neighbour
-    xnew = agt.env.x[ely,elx]
-    if dc > 0.4:
-        xnew = xnew + move 
-    else:
-        xnew = xnew - move
-    xnew = np.maximum(0, np.minimum(1.0, xnew))
-    agt.env.x[ely,elx] = xnew
-      
-    
-class AgentSIMP(agent.Agent):
-    def __init__(self):
-        super().__init__()
-        self.x = 0
-        self.dc = 0
-    def sense(self, name):
-        pass
-    def make_decision(self):
-        return ["test_update"]
-    def act(self):
-        re = self.make_decision()
-        for i in re:
-            self.acts.run(i,self)
-
-class Environment(object):
+class Oc(object):
     
     '''
     young: young's modulus
@@ -76,38 +23,13 @@ class Environment(object):
         self.dim = 2
         self.verbose = verbose
         self.x = []
-        self.agts = {}
-        self.func_pool = ActionPool()
-        self.func_pool.set_parent(self)
-        
-        # test action adding
-        self.func_pool.add_func(test_update)
-    
-    def bind(self, kb):
-        nelx, nely = self.x.shape 
-        self.agts = {}
-        for ely in range(nely):
-            for elx in range(nelx):
-                a = AgentSIMP()                
-                a.set_acts(self.func_pool)   # dynamic define act 
-                a.set_knowledge_engine(kb)
-                a.set_environment(self)
-                a.bind_pos((ely,elx))               
-                self.agts[(ely,elx)] = a   
-                
         return
+    
     def update(self, x, dc):
         self.x = x
-        
-        m = np.abs(dc)
-        m = m / np.max(m)  
-             
-        self.dc = m
-    # topology optimization
-    def run(self, load, constraint, x, penal, rmin, delta, loopy, history = False):
-        # debug
-        ugif = debug.MakeUFieldGif(load.nelx, load.nely, load.alldofs())
 
+    # topology optimization
+    def run(self, load, constraint, x, penal, rmin, delta, loopy, history = False):       
         loop = 0 # number of loop iterations
         change = 1.0 # maximum density change from prior iteration
         self.load = load
@@ -123,17 +45,8 @@ class Environment(object):
             self.convergence.add_data(x)
             if self.verbose: print('iteration ', loop, ', change ', self.convergence.listy[-1], flush = True)
             if history: x_history.append(x.copy())
-            ## debug
-            #debug.save_img(1.0 -x_history[-1], "r:/output%d.png" % loop)
-            #debug.show_matrix(self.dc, True)
-            #debug
-            #im = debug.show_displacement_field(u, load.alldofs(), load.nelx, load.nely)
-            ugif.add_data(u.copy())
-            
-        # done
-        print(self.convergence.listy)
-        ugif.save_gif("r:/test.gif")
-        
+
+        # done       
         if history:
             return x, x_history
         else:
@@ -143,9 +56,7 @@ class Environment(object):
     def init(self, load, constraint):
         (nelx, nely) = load.shape()
         # mean density
-        self.x = np.ones((nely, nelx))*constraint.volume_frac()
-        # set up and binding agents with environment & KE
-        self.bind(None)        
+        self.x = np.ones((nely, nelx))*constraint.volume_frac()     
         
         return self.x
 
@@ -167,7 +78,7 @@ class Environment(object):
         dc = self.filt(x, rmin, dc)
 
         # update
-        x = self.update_agent(constraint, x, dc)
+        x = self.update_oc(constraint, x, dc)
 
         # how much has changed?
         change = np.amax(abs(x-xold))
