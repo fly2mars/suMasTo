@@ -13,7 +13,7 @@ import matplotlib.lines as mlines
 
 import suFuncStack 
 
-from loads import HalfBeam
+from loads import Load, HalfBeam
 from constraints import DensityConstraint
 
 class VisProblem(object):
@@ -38,11 +38,11 @@ class VisProblem(object):
         Compute arrow coordinate for force 
         '''
         arrow_len = 0.8
-        
+        dim = self.load.dim
         dof_idx = self.load.force()
         f_dof_idx = [i for i, v in enumerate(dof_idx) if v !=0]
-        f_dof_idx = np.array(f_dof_idx) 
-        dim = f_dof_idx % load.dim      # x direction: 0   y direction: 1
+        f_dof_idx = np.array(f_dof_idx)         
+        dim = f_dof_idx % dim      # x direction: 0   y direction: 1
         ndx = f_dof_idx // 2
         x0 = ndx  // (self.load.nely + 1)
         y0 = self.load.nely - ndx % (self.load.nely + 1)
@@ -162,7 +162,7 @@ class VisConvergenceTrend(object):
         
 if __name__ == "__main__":
     # input parameters
-    nelx = 40
+    nelx = 60
     nely = 20
     
     # constraints

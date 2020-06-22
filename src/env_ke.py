@@ -1,9 +1,10 @@
 '''
-topology optimization
+Class env_ke provide objects for buiding environments, which load and agent
+topology optimization by MAS
 
 2D only for now
 '''
-
+import time
 import numpy as np
 import math
 from scipy.sparse import coo_matrix
@@ -12,6 +13,12 @@ import suFuncStack
 from suAI.misc import debug
 from suAI.mas import agent
 
+from suAI.ke.ke import KnowledgeEngineBase
+from pyknow import *
+
+####################
+#   ActionPool     #   
+####################   
 class ActionPool(object):
     def __init__(self):
         pass
@@ -27,7 +34,9 @@ class ActionPool(object):
     def run(self, method_name, agt):
         getattr(self, "ACT_"+method_name)(agt)  
         
-# test: to be added into ActionPool()
+####################
+#   Actions        #   
+####################   
 def test_update(agt):
     nely, nelx = agt.env.x.shape
     (ely, elx) = agt.pos
@@ -36,8 +45,9 @@ def test_update(agt):
     xmax = agt.env.constraint.density_max()  
 
     x = agt.env.x[ely, elx]
-    dc = agt.env.dc[ely,elx]
-    move = 0.03 * xmax
+    #dc = agt.env.dc[ely,elx]
+    dc = agt.dc
+    move = 0.03 #* xmax
     
     # if dc > 2/3 neighbour
     xnew = agt.env.x[ely,elx]
@@ -47,22 +57,123 @@ def test_update(agt):
         xnew = xnew - move
     xnew = np.maximum(0, np.minimum(1.0, xnew))
     agt.env.x[ely,elx] = xnew
-      
+
+# test: to be added into ActionPool()
+def increase_density(agt):
+    nely, nelx = agt.env.x.shape
+    (ely, elx) = agt.pos
+   
+    xmax = agt.env.constraint.density_max()  
+    move = 0.03 #* xmax
+        
+    xnew = agt.env.x[ely,elx]
+    xnew = xnew + move 
+    xnew = np.maximum(0, np.minimum(1.0, xnew))
+    agt.env.x[ely,elx] = xnew
     
+# test: to be added into ActionPool()
+def decrease_density(agt):
+    nely, nelx = agt.env.x.shape
+    (ely, elx) = agt.pos
+
+    xmax = agt.env.constraint.density_max()  
+    move = 0.03 #* xmax
+
+    xnew = agt.env.x[ely,elx]
+    xnew = xnew - move     
+    xnew = np.maximum(0, np.minimum(1.0, xnew))
+    agt.env.x[ely,elx] = xnew    
+
+##########
+#   KE   #
+##########
+class ke_mas(KnowledgeEngineBase, KnowledgeEngine):
+    '''    
+    1. Hold an knowlege base (eg. rules and facts) for MAS based evolution
+    2. Help agents to make a decision.
+    '''
+    def __init__(self):
+        KnowledgeEngineBase.__init__(self)
+        KnowledgeEngine.__init__(self)
+    
+    def reset(self):
+        super().reset()
+        self.answers = []
+        
+    @DefFacts()
+    def __init_facts(self):
+        yield(Fact(method='mas'))
+        return
+    
+    #@Rule(Fact(if_edge = True),
+          #Fact(pos_energy = -1),
+          #Fact(step = 0)
+          #)
+    #def set_edge(self):
+        #self.answers.append( 'set_edge')
+    
+    #@Rule(NOT (Fact(if_edge = True)),
+          #Fact(pos_energy = -1),
+          #Fact(step = 1)
+          #)
+    #def pe_inc(self):
+        #self.answers.append('pe_inc')
+        
+    #@Rule(Fact(step = 2),
+          #NOT (Fact(if_edge = True)),
+          #Fact(pos_energy = MATCH.pos_energy),
+          #Fact(thickness = MATCH.thickness),
+          #TEST(lambda pos_energy, thickness: pos_energy > thickness)
+          #)
+    #def make_shell(self):
+        #self.answers.append('make_shell')
+    
+    ## dc > 0.4 -> 
+    @Rule (Fact(dc = MATCH.dc),
+           TEST(lambda dc: dc > 0.4)
+          )
+    def increase_density(self):
+        self.answers.append('increase_density')
+        
+    @Rule (Fact(dc = MATCH.dc),
+           TEST(lambda dc: dc <= 0.4)
+           )
+    def decrease_density(self):
+        self.answers.append('decrease_density')
+        
+    def add_facts(self, facts):
+        self.declare(*facts)
+        
+    def status(self):
+        print(self.facts)
+      
+#############
+#   Agent   #
+#############    
 class AgentSIMP(agent.Agent):
     def __init__(self):
         super().__init__()
         self.x = 0
         self.dc = 0
-    def sense(self, name):
-        pass
+    def sense(self, name='dc'):
+        # todo: make it compatible with environment-properties-binding
+        self.dc = self.env.dc[self.pos[0], self.pos[1]]
+        return Fact(dc = float(self.dc))
     def make_decision(self):
-        return ["test_update"]
+        fs = []
+        fs.append(self.sense('dc'))
+        self.ke.reset()
+        self.ke.add_facts(fs)        
+        self.ke.run()
+        return self.ke.answers
     def act(self):
         re = self.make_decision()
         for i in re:
             self.acts.run(i,self)
 
+###################
+#   Environment   #
+###################  
 class Environment(object):
     
     '''
@@ -79,37 +190,33 @@ class Environment(object):
         self.x = []
         self.agts = {}
         self.func_pool = ActionPool()
-        self.func_pool.set_parent(self)
+        self.func_pool.set_parent(self)        
         
         # test action adding
         self.func_pool.add_func(test_update)
+        self.func_pool.add_func(decrease_density)
+        self.func_pool.add_func(increase_density)        
     
-    def bind(self, kb):
+    def bind(self, ke):
         nely, nelx = self.x.shape 
         self.agts = {}
+        if(ke is None):
+            self.ke = ke_mas()
+        else:
+            self.ke = ke
+            
         for ely in range(nely):
             for elx in range(nelx):
                 a = AgentSIMP()                
                 a.set_acts(self.func_pool)   # dynamic define act 
-                a.set_knowledge_engine(kb)
+                a.set_knowledge_engine(self.ke)
                 a.set_environment(self)
                 a.bind_pos((ely,elx))               
-                self.agts[(ely,elx)] = a   
-                
+                self.agts[(ely,elx)] = a 
         return
     
-    def update(self, x, dc):
-        self.x = x
-        
-        m = np.abs(dc)
-        m = m / np.max(m)  
-             
-        self.dc = m
-    # topology optimization
-    def run(self, load, constraint, x, penal, rmin, delta, loopy, history = False):
-        # debug
-        ugif = debug.MakeUFieldGif(load.nelx, load.nely, load.alldofs())
-
+     
+    def run(self, load, constraint, x, penal, rmin, delta, loopy, history = False):       
         loop = 0 # number of loop iterations
         change = 1.0 # maximum density change from prior iteration
         self.load = load
@@ -126,17 +233,6 @@ class Environment(object):
             self.convergence.add_data(x)
             if self.verbose: print('iteration ', loop, ', change ', self.convergence.listy[-1], flush = True)
             if history: x_history.append(x.copy())
-            ## debug
-            #debug.save_img(1.0 -x_history[-1], "r:/output%d.png" % loop)
-            #debug.show_matrix(self.dc, True)
-            #debug
-            #im = debug.show_displacement_field(u, load.alldofs(), load.nelx, load.nely)
-            ugif.add_data(u.copy())
-            
-        # done
-        #print(self.convergence.listy)
-        #print('Saving gif for visulizing the u field ...')
-        #ugif.save_gif("r:/test.gif")
         
         if history:
             return x, x_history
@@ -171,7 +267,7 @@ class Environment(object):
         #dc = self.filt(x, rmin, dc)
         dc = self.fast_filt(x,dc,self.H, self.Hs)
         # update
-        x = self.update_agent(constraint, x, dc)
+        x = self.update(constraint, x, dc)
 
         # how much has changed?
         change = np.amax(abs(x-xold))
@@ -246,45 +342,21 @@ class Environment(object):
                 dcn[j,i] = dcn[j,i]/(x[j,i]*sum);
 
         return dcn
-    
-    # optimality criteria update
-    def update_oc(self, constraint, x, dc):
-        volfrac = constraint.volume_frac()
-        xmin = constraint.density_min()
-        xmax = constraint.density_max()
-
-        # ugly hardwired constants to fix later
-        move = 0.2 * xmax
-        l1 = 0
-        l2 = 100000
-        lt = 1e-4
-
-        nely, nelx = x.shape
-        while (l2-l1 > lt):
-            lmid = 0.5*(l2+l1)
-            xnew = np.multiply(x, np.sqrt(-dc/lmid))
-
-            x_below = np.maximum(xmin, x - move)
-            x_above = np.minimum(xmax, x + move)
-            xnew = np.maximum(x_below, np.minimum(x_above, xnew));
-
-            if (np.sum(xnew) - volfrac*nelx*nely) > 0:
-                l1 = lmid
-            else:
-                l2 = lmid
-
-        return xnew    
-
+      
     # update by multiple agents
-    def update_agent(self, constraint, x, dc, kb=""):
+    def update(self, constraint, x, dc, kb=""):
         volfrac = constraint.volume_frac()
-        xmin = constraint.density_min()
-        xmax = constraint.density_max()
+        self.xmin = constraint.density_min()
+        self.xmax = constraint.density_max()
         
-        self.update(x,dc)
+        self.x = x
+        
+        m = np.abs(dc)
+        m = m / np.max(m)
+        self.dc = m
     
         # ugly hardwired constants to fix later
-        move = 0.2 * xmax
+        self.move = 0.3 * self.xmax
         l1 = 0
         l2 = 100000
         lt = 1e-4            
@@ -314,4 +386,39 @@ class Environment(object):
 
 
 if __name__ == "__main__":
-    pass
+    act_pool = ActionPool()
+    act_pool.add_func(increase_density)
+    act_pool.add_func(decrease_density)
+    ke = ke_mas()
+    agt = AgentSIMP()
+    
+    def fake_sense(name, v):
+        return Fact(name = v)
+    
+    f = classmethod(fake_sense)
+    setattr(agt, fake_sense.__name__, fake_sense)
+    
+    agt.x = 0.5
+    agt.dc = 0.5
+    agt.ke = ke
+    
+    vs = np.random.random([1000])
+    
+    print(type(vs[0]))
+    print(type(0.1))
+    
+    # statistic time
+    start_time = time.perf_counter()    
+    for v in vs:
+        f1 = Fact(dc = float(v))
+        fs = [f1]
+        ke.reset()
+        ke.add_facts(fs)  
+        ke.run()
+        #print(ke.answers)
+    end_time = time.perf_counter()
+    print("{} seconds used".format(end_time - start_time))
+    
+    
+    
+    

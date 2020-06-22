@@ -34,6 +34,7 @@ class MakeUFieldGif(object):
         U = np.array([ux for i,ux in enumerate(u) if i % 2 == 0])
         V = np.array([uy for i,uy in enumerate(u) if i % 2 == 1]) 
         
+        plt.ylim(-1, np.max(Y))
         ax.axis('off')
         plt.quiver(self.X,self.Y,U,V, color='red')
 

@@ -98,8 +98,9 @@ class HalfBeam(Load):
         # downward force at the upper left corner
         #f[self.dim-1] = -1.0
         #f[(self.nely+1)*self.nelx*2+1]= -1.0
-        cols = 90
-        f[(self.nely+1)*2*cols+1]= -1.0
+        row = 0
+        col = 60
+        f[(self.nely+1)*2*col + row*2  ]= 1.0
         return f
 
     def fixdofs(self):
