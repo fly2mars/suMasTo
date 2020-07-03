@@ -12,16 +12,21 @@ from scipy.sparse import coo_matrix
 import suFuncStack 
 from suAI.misc import debug
 from suAI.mas import agent
-
+from suAI.misc import Qtrac
 from suAI.ke.ke import KnowledgeEngineBase
 from pyknow import *
 
-import multiprocessing
+import concurrent.futures
 
+from random import choice
 if __name__ == "__main__":
     from loads import HalfBeam
     from constraints import DensityConstraint
-    from fesolvers import LilFESolver, CooFESolver    
+    from fesolvers import LilFESolver, CooFESolver   
+    
+    
+    
+
 
 ####################
 #   ActionPool     #   
@@ -39,32 +44,24 @@ class ActionPool(object):
         func_list = [i for i in func_list if i[:4]=="ACT_"]
         return func_list
     def run(self, method_name, pos):
-        getattr(self, "ACT_"+method_name)(pos)  
+        return getattr(self, "ACT_"+method_name)(pos)  
         
 ####################
 #   Actions        #   
 ####################   
 # action: to be added into ActionPool()
-def increase_density(x):    
-    xmax = 1
-    move = 0.03 * xmax
-    
+def increase_density(x):        
+    move = 0.03    
     xnew = x + move 
-    xnew = np.maximum(0, np.minimum(1.0, xnew))
+    xnew = np.maximum(0, np.minimum(1.0, xnew))        
     return xnew
     
 # action: to be added into ActionPool()
-def decrease_density(pos):
-    global env    
-    #(ely,elx)  = pos
-    return 1
-    #xmax = env.constraint.density_max()  
-    #move = 0.03 #* xmax
-
-    #xnew = env.x[ely,elx]
-    #xnew = xnew - move 
-    #xnew = np.maximum(0, np.minimum(1.0, xnew))
-    #env.x[ely,elx] = xnew  
+def decrease_density(x):    
+    move = 0.03    
+    xnew = x - move     
+    xnew = np.maximum(0, np.minimum(1.0, xnew))    
+    return xnew
 
 ##########
 #   KE   #
@@ -106,64 +103,85 @@ class ke_mas(KnowledgeEngineBase, KnowledgeEngine):
     
     def status(self):
         print(self.facts)
-      
-#############
-#   Agent   #
-#############    
-class AgentSIMP(agent.Agent):
-    def __init__(self):
-        super().__init__()
-        self.x = 0
-        self.dc = 0
-    def sense(self, name='dc'):
-        # todo: make it compatible with environment-properties-binding
-        self.dc = self.env.dc[self.pos[1], self.pos[0]]
-        return Fact(dc = float(self.dc))
-    def make_decision(self):
-        fs = []
-        fs.append(self.sense('dc'))
-        self.ke.reset()
-        self.ke.add_facts(fs)        
-        self.ke.run()
-        return self.ke.answers
-    def act(self):
-        re = self.make_decision()
-        for i in re:
-            self.acts.run(i,self)
-            
-    def test(self):
-        print(self.pos)
+
 
 ###################################################
 #  Global variable for parallel computing         #
 ###################################################
-ke   = ke_mas()
 env  = None
 acts = None
-x    = None
-gdc   = []
-agent_pos_arr = []
-
 
 acts = ActionPool()
 acts.add_func(decrease_density)
 acts.add_func(increase_density)     
 
+
+def timer(func):
+    def wraper(*args, **kargs):
+        start_time = time.perf_counter()
+        f = func(*args, **kargs)
+        end_time = time.perf_counter()
+        print('Done in {} seconds'.format(end_time - start_time))   
+        return f
+    return wraper
+
 # parallel processing method  
-def agent_act(param):
+def col_agents_act(col_idx, col_x, col_dc):
+    '''
+    Deal with each sub columns
+    '''       
+    ke = ke_mas()
+    for i in range(len(col_x)):         
+        f = Fact(dc = float(col_dc[i]))
+        fs = []
+        fs.append(f)
+        ke.reset()
+        ke.add_facts(fs)        
+        ke.run()
+        for func in ke.answers:
+            col_x[i] = acts.run(func,col_x[i])        
     
-    pos = param[0]
-    dc = param[1]
-    f = Fact(dc = float(dc))
-    fs = []     
-    fs.append(f)
-    ke.reset()
-    ke.add_facts(fs)        
-    ke.run()
-    re = ke.answers
+    return col_idx, col_x
+
+def update_parallel(env, constraint):
+    #volfrac = constraint.volume_frac()
+    #env.xmin = constraint.density_min()
+    #env.xmax = constraint.density_max()   
     
-    #for f in re:
-        #acts.run(f,pos)               
+    futures = set()         
+    data = []
+    with concurrent.futures.ProcessPoolExecutor(max_workers=8) as executor:
+        for idx_col, col_x, col_dc in get_jobs(env):
+            future = executor.submit(col_agents_act, idx_col, col_x, col_dc)            
+            futures.add(future)
+        data = wait_for(futures, env)
+    
+    return env.combine_data(data)
+
+def get_jobs(env):
+    dc_cols = env.divide_data(env.dc)
+    x_cols = env.divide_data(env.x)
+    for idx_col in range(len(dc_cols)):
+        yield idx_col, x_cols[idx_col].flatten(),  dc_cols[idx_col].flatten()
+
+
+def wait_for(futures, env):
+    canceled = False    
+    data = {}
+    for future in concurrent.futures.as_completed(futures):
+        err = future.exception()
+        if err is None:
+            result = future.result()
+            #col_idx_arr += [result.col_idx]
+            #ata += result.col_data
+            data[result[0]] = result[1]
+            #print(result)
+            
+        elif isinstance(err, TypeError):
+            Qtrac.report(str(err), True)
+        else:
+            raise err # Unanticipated
+    return data            
 
 ###################
 #   Environment   #
@@ -188,29 +206,8 @@ class Environment(object):
         
         # test action adding        
         self.func_pool.add_func(decrease_density)
-        self.func_pool.add_func(increase_density)        
-    
-    def bind(self, ke):
-        global agent_pos_arr
-        agent_pos_arr = []
-        nely, nelx = self.x.shape 
-        self.agts = {}
-        if(ke is None):
-            self.ke = ke_mas()
-        else:
-            self.ke = ke
-        
-        for ely in range(nely):
-            for elx in range(nelx):
-                a = AgentSIMP()                
-                a.set_acts(self.func_pool)   # dynamic define act 
-                a.set_knowledge_engine(self.ke)
-                a.set_environment(self)
-                a.bind_pos((ely,elx))               
-                self.agts[(ely,elx)] = a                 
-                agent_pos_arr.append(a.pos)
-        return
-    
+        self.func_pool.add_func(increase_density)            
+   
     def divide_data(self, m):
         '''
         dividing matrix into columns
@@ -261,9 +258,7 @@ class Environment(object):
     def init(self, load, constraint):
         (nelx, nely) = load.shape()
         # mean density
-        self.x = np.ones((nely, nelx))*constraint.volume_frac()
-        # set up and binding agents with environment & KE
-        self.bind(ke)
+        self.x = np.ones((nely, nelx))*constraint.volume_frac()      
         
         return self.x
 
@@ -283,9 +278,9 @@ class Environment(object):
 
         # filter
         #dc = self.filt(x, rmin, dc)
-        dc = self.fast_filt(x,dc,self.H, self.Hs)
+        self.dc = self.fast_filt(x,dc,self.H, self.Hs)
         # update
-        x = self.update_parallel(constraint, x, dc)
+        x = self.update(x, constraint)
 
         # how much has changed?
         change = np.amax(abs(x-xold))
@@ -361,64 +356,18 @@ class Environment(object):
 
         return dcn
           
-    #@staticmethod
-    def update_parallel(self, constraint, x, dc, kb=""):
-        flat_x = x.flatten('F')
-        print(dc.shape)
-        flat_dc = np.asarray(dc).flatten('F')
-        print(flat_dc.shape)
-        param = zip(flat_x, flat_dc)
-        with multiprocessing.Pool() as pool:
-            result = pool.apply_async(agent_act, param)              # evaluate "agent_act" asynchronously in a single process
-            pool.map(agent_act, param)     
-            
-        #wait here
-        #reconstruct x
-        #return x
-        
-    # parallel update by multiple agents
-    def update(self, constraint, x, dc, kb=""):
-        global ke
-        global env
-        global acts           
-        global agent_pos_arr
-        
-        
-        volfrac = constraint.volume_frac()
-        self.xmin = constraint.density_min()
-        self.xmax = constraint.density_max()
-        
-        self.x = x
-                
-        env  = self
-        acts = self.func_pool
-        
-        m = np.abs(dc)
-        m = m / np.max(m)
-        self.dc = m
     
-        # ugly hardwired constants to fix later
-        self.move = 0.3 * self.xmax
-        l1 = 0
-        l2 = 100000
-        lt = 1e-4            
+    def update(self, x, constraint):
+        self.x = x        
+        m = np.abs(self.dc)
+        m = m / np.max(m)
+        self.dc = np.asarray(m)
         
-        ## parallel evolve
-        gdc = self.dc.flatten()
-        param_list = [[agent_pos_arr[i], gdc[i]] for i in range(len(gdc))]
+        x = update_parallel(self, constraint)       
         
-        #for a in self.agts.values():
-            #a.act()  # (1)sense (2)decite (3)act        
-        #with multiprocessing.Pool(processes = 8) as pool:         # start cpu_num worker processes
-            #parallel_func=partial(agent_act, y=
-            #result = pool.apply_async(multi_run_wrapper, param_list)              # evaluate "agent_act" asynchronously in a single process
-            #pool.map(agent_act, param_list)
-            
-                       
-             
-        xnew = self.x
-        return xnew
-
+        return x
+        
+   
     # element (local) stiffness matrix
     def lk(self, young, poisson):
         e = young
@@ -440,92 +389,7 @@ class Environment(object):
 
 
     
-if __name__ == "__main__":
-    def timer(func):
-        def wraper(*args, **kargs):
-            start_time = time.perf_counter()
-            f = func(*args, **kargs)
-            end_time = time.perf_counter()
-            print('Done in {} seconds'.format(end_time - start_time))   
-            return f
-        return wraper
-    
-    def col_agents_act(col_idx, col_x, col_dc):
-        '''
-        Deal with each sub columns
-        '''       
-        for i in range(len(col_x)):
-            engine.reset()
-            engine.declare(Light(color=choice(['green', 'yellow', 'blinking-yellow', 'red'])))
-            engine.run()        
-            col_x[i] = col_x[i] + 1
-            col_dc[i] = col_dc[i] + 1
-        
-        return col_idx, col_x
-
-
-    def get_jobs(env):
-        dc_cols = env.divide_data(env.dc)
-        x_cols = env.divide_data(env.x)
-        for idx_col in range(len(dc_cols)):
-            yield idx_col, x_cols[idx_col].flatten(),  dc_cols[idx_col].flatten()
-    
-    
-    def wait_for(futures, env):
-        canceled = False    
-        data = {}
-        for future in concurrent.futures.as_completed(futures):
-            err = future.exception()
-            if err is None:
-                result = future.result()
-                #col_idx_arr += [result.col_idx]
-                #ata += result.col_data
-                data[result[0]] = result[1]
-                #print(result)
-                
-            elif isinstance(err):
-                Qtrac.report(str(err), True)
-            else:
-                raise err # Unanticipated
-        return data
-
-    
-    def act(pos, dc):      
-        f = Fact(dc = float(dc))
-        fs = []     
-        fs.append(f)
-        ke.reset()
-        ke.add_facts(fs)        
-        ke.run()
-        re = ke.answers        
-        #for f in re:
-            #acts.run(f,pos)       
-    @timer
-    def run_agents(pos_arr, dc):        
-        for i in pos_arr:
-            act(pos_arr[i], dc[i])
-    
-    num_agent = 7500
-    ke = ke_mas()    
-    dc = np.random.random([num_agent])       
-    act_pool = ActionPool()
-    act_pool.add_func(increase_density)
-    act_pool.add_func(decrease_density)
-    
-    
-    # init agents
-    agts = {}    
-    pos_arr = []
-    num = 100
-    for i in range(100):
-        agt = AgentSIMP()
-        agt.pos = i       
-        agt.ke = ke        
-        agts[i] = agt
-        pos_arr.append(agt.pos)               
-    
-    #parallel_run_agents(pos_arr, dc)
-    #run_agents(pos_arr, dc)
+if __name__ == "__main__":    
     
     # loading/problem
     nelx = 15

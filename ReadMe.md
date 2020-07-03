@@ -17,9 +17,15 @@ python runto.py --optimizer [oc | mas]
 ```
 | |OC|2 rules MAS|
 |---:|:-------:|:------------------------: |
-|Congestion|<img src="doc/oc_congestion.png" alt="mas conges"  width="200" />|<img src="doc/singlerule_congestion.png" alt="mas conges"  width="200" />|
-|Structure|<img src="doc/oc_topopt.gif" alt="mas conges"  width="200" />|<img src="doc/mas_topopt.gif" alt="mas conges"  width="200" />|
+|Congestion|<img src="doc/oc_congestion.png" alt="OC conges"  width="300" />|<img src="doc/singlerule_congestion.png" alt="mas conges"  width="300" />|
+|Structure|<img src="doc/oc_topopt.gif" alt="OC structure"  width="300" />|<img src="doc/mas_topopt.gif" alt="mas structure"  width="300" />|
 
 
+### Code
+* Load
+Load class can init load case. 
 ### Rule template
 Coming soon...
+
+### Misc
+The [original SIMP code](https://github.com/1iyiwei/topopt) is provided by Li-Yi Wei (魏立一) from Hongkong University.

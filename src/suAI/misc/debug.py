@@ -34,7 +34,7 @@ class MakeUFieldGif(object):
         U = np.array([ux for i,ux in enumerate(u) if i % 2 == 0])
         V = np.array([uy for i,uy in enumerate(u) if i % 2 == 1]) 
         
-        plt.ylim(-1, np.max(Y))
+        plt.ylim(-1, np.max(self.Y))
         ax.axis('off')
         plt.quiver(self.X,self.Y,U,V, color='red')
 
@@ -42,7 +42,7 @@ class MakeUFieldGif(object):
         self.fig.canvas.draw()       # draw the canvas, cache the renderer
         image = np.frombuffer(self.fig.canvas.tostring_rgb(), dtype='uint8')
         image  = image.reshape(self.fig.canvas.get_width_height()[::-1] + (3,))
-        print(self.bufs[idx])
+        #print(self.bufs[idx])
         return image        
         
         
@@ -53,7 +53,7 @@ class MakeUFieldGif(object):
         
 
 def save_img(img, str_path):
-    print(img)
+    #print(img)
     imageio.imsave(str_path, img)
     
 def show_matrix(m, reverse=False):     

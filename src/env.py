@@ -26,11 +26,15 @@ class ActionPool(object):
         return func_list
     def run(self, method_name, agt):
         getattr(self, "ACT_"+method_name)(agt)  
-        
+
+
 # test: to be added into ActionPool()
 def test_update(agt):
+    if agt.pos in agt.env.boundary:
+        return
     nely, nelx = agt.env.x.shape
     (ely, elx) = agt.pos
+ 
     # ugly hardwired constants to fix later
     xmin = agt.env.constraint.density_min()
     xmax = agt.env.constraint.density_max()  
@@ -109,6 +113,7 @@ class Environment(object):
     def run(self, load, constraint, x, penal, rmin, delta, loopy, history = False):
         # debug
         ugif = debug.MakeUFieldGif(load.nelx, load.nely, load.alldofs())
+        self.boundary = load.boundary_ele()
 
         loop = 0 # number of loop iterations
         change = 1.0 # maximum density change from prior iteration
@@ -131,12 +136,12 @@ class Environment(object):
             #debug.show_matrix(self.dc, True)
             #debug
             #im = debug.show_displacement_field(u, load.alldofs(), load.nelx, load.nely)
-            ugif.add_data(u.copy())
+            #ugif.add_data(u.copy())
             
         # done
         #print(self.convergence.listy)
         #print('Saving gif for visulizing the u field ...')
-        #ugif.save_gif("r:/test.gif")
+        #ugif.save_gif("r:/u.gif")
         
         if history:
             return x, x_history
@@ -185,7 +190,7 @@ class Environment(object):
         nely, nelx = x.shape
         for ely in range(nely):
             for elx in range(nelx):
-                ue = u[load.edofOld(elx, ely, nelx, nely)]
+                ue = u[load.edofNode(elx, ely, nelx, nely)]
                 ce = np.dot(ue.transpose(), np.dot(ke, ue))
                 c = c + (x[ely,elx]**penal)*ce
                 dc[ely,elx] = -penal*(x[ely,elx]**(penal-1))*ce

@@ -407,6 +407,19 @@ if __name__ == "__main__":
     print(type(vs[0]))
     print(type(0.1))
     
+    
+    ###debug
+    fs = []
+    f = Fact(dc = float(0.5))
+    
+    fs.append(f) 
+    ke = ke_mas()
+    ke.reset()
+    ke.add_facts(fs)  
+    ke.status()
+    ke.run()
+    print(ke.answers)      
+    
     # statistic time
     start_time = time.perf_counter()    
     for v in vs:
@@ -415,7 +428,7 @@ if __name__ == "__main__":
         ke.reset()
         ke.add_facts(fs)  
         ke.run()
-        #print(ke.answers)
+        print(ke.answers)
     end_time = time.perf_counter()
     print("{} seconds used".format(end_time - start_time))
     

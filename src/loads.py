@@ -30,8 +30,9 @@ class Load(object):
         n4 = self.node(elx,     ely + 1, nelx, nely)
         return n1, n2, n3, n4
 
+                    
     # edof
-    def edofOld(self, elx, ely, nelx, nely):
+    def edofNode(self, elx, ely, nelx, nely):
         n1, n2, n3, n4 = self.nodes(elx, ely, nelx, nely)
         return np.array([self.dim*n1,self.dim*n1+1, self.dim*n2,self.dim*n2+1, self.dim*n3,self.dim*n3+1, self.dim*n4,self.dim*n4+1])
 
@@ -93,25 +94,88 @@ class HalfBeam(Load):
     def __init__(self, nelx, nely):
         super().__init__(nelx, nely)
         
+    def setforce(self, f, col, row, v, ori='y'):
+        if ori == 'x':
+            f[(self.nely+1)*2*col + row*2  ]= v
+        if ori == 'y':
+            f[(self.nely+1)*2*col + row*2 + 1 ]= v
+        
     def force(self):
         f = super().force()
         # downward force at the upper left corner
         #f[self.dim-1] = -1.0
         #f[(self.nely+1)*self.nelx*2+1]= -1.0
         row = 0
-        col = 60
-        f[(self.nely+1)*2*col + row*2  ]= 1.0
+        col = 40
+        self.setforce(f, col, row, -1, 'y')   
+        
+        col = 50
+        self.setforce(f, col, row, -1, 'y')         
         return f
 
     def fixdofs(self):
         # left side fixed to a wall, lower right corner fixed to a point
-        return ([x for x in range(0, self.dim*(self.nely+1), self.dim)] + [self.dim*(self.nelx+1)*(self.nely+1)-1])
+        #return ([x for x in range(0, self.dim*(self.nely+1), self.dim)] + [self.dim*(self.nelx+1)*(self.nely+1)-1])
+        # lower left and lower right fixed to a point`
+        return [self.dim*(self.nely+1)-1] +  [self.dim*(self.nelx+1)*(self.nely+1)-1]
 
     def freedofs(self):
         return list(set(self.alldofs()) - set(self.fixdofs()))
-
     
-if __name__ == "__main__":
+    def boundary_ele(self):
+        B = []
+        nely = self.nely
+        nelx = self.nelx
+        for y in range(nely):
+            for x in range(nelx):
+                if min(y,x) == 0 or y == nely-1 or x == nelx-1:
+                    B.append((y,x))
+        return B    
+
+# example of load, establish structure from image.
+import cv2
+class ImageTypeLoad(Load):
+    def __init__(self, image_path):
+        nelx = 30
+        nely = 10
+        try:
+            im = cv2.imread(image_path, cv2.IMREAD_COLOR)
+            nely, nelx, channel = im.shape
+            ret, thresh = cv2.threshold(im, 127, 255, 1)                          
+            
+        except Exception as e:
+            print(str(e))
+        finally:
+            super().__init__(nelx, nely)  
+    
+        
+    def force(self):
+        f = super().force()        
+        row = 0
+        col = 40
+        self.setforce(f, col, row, -1, 'y')   
+        return f
+
+    def fixdofs(self):
+        # left side fixed to a wall, lower right corner fixed to a point
+        #return ([x for x in range(0, self.dim*(self.nely+1), self.dim)] + [self.dim*(self.nelx+1)*(self.nely+1)-1])
+        # lower left and lower right fixed to a point`
+        return [self.dim*self.nely-1] +  [self.dim*(self.nelx+1)*(self.nely+1)-1]
+
+    def freedofs(self):
+        return list(set(self.alldofs()) - set(self.fixdofs()))    
+    
+    def get_outside_ele(self):
+        B = []
+        nely = self.nely
+        nelx = self.nelx
+        for y in range(nely):
+            for x in range(nelx):
+                if self.thresh[nely, nelx] == 0:
+                    B.append((y,x))
+        return B        
+    
+if __name__=='__main__':
     
     nelx = 40
     nely = 10
@@ -127,6 +191,8 @@ if __name__ == "__main__":
     print(load.alldofs())
     print("fix dof")
     print(load.fixdofs())
-    print(load.edofOld(0,0,nelx, nely))
+    print(load.edofNode(0,0,nelx, nely))
+    print(load.boundary_ele())
+    
     
     

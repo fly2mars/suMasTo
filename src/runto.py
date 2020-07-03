@@ -32,14 +32,14 @@ if __name__ == "__main__":
     xmax = 1.0
 
     # input parameters
-    nelx = 90 
+    nelx = 90
     nely = 30
 
     penal = 3.0
     rmin = 7.5
 
     delta = 0.02
-    loopy = 50   
+    loopy = 30   
     
     parser = argparse.ArgumentParser(description="Run a toplogy optimizer.")
     parser.add_argument('--optimizer', dest='optimizer', required=True)

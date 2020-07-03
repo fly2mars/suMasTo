@@ -14,6 +14,14 @@ import Qtrac
 from pyknow import *
 from random import choice
 
+def timer(func):
+    def wraper(*args, **kargs):
+        start_time = time.perf_counter()
+        f = func(*args, **kargs)
+        end_time = time.perf_counter()
+        print('Done in {} seconds'.format(end_time - start_time))   
+        return f
+    return wraper
 
 class Light(Fact):
     """Info about the traffic light."""
@@ -66,16 +74,26 @@ class EnvSim():
             m = np.concatenate((m, np.vstack(data[i]) ), axis=1)
         
         return m
+    
+    def run(self):
+        self.update_parallel(self)
+    @staticmethod
+    @timer
+    def update_parallel(env):    
+        this_function_name = inspect.currentframe().f_code.co_name
+        print("Begin  {}...".format (this_function_name))
+        print(env.x)
+        futures = set()         
+        with concurrent.futures.ProcessPoolExecutor(max_workers=8) as executor:
+            for idx_col, col_x, col_dc in get_jobs(env):
+                future = executor.submit(f, idx_col, col_x, col_dc)
+                futures.add(future)
+            data = wait_for(futures, env)
+            print(env.combine_data(data))
+            return     
             
   
-def timer(func):
-    def wraper(*args, **kargs):
-        start_time = time.perf_counter()
-        f = func(*args, **kargs)
-        end_time = time.perf_counter()
-        print('Done in {} seconds'.format(end_time - start_time))   
-        return f
-    return wraper
+
 
 
 def info():
@@ -155,6 +173,7 @@ if __name__ == '__main__':
     nelx = 150
     nely = 50
     env = EnvSim(nelx, nely)
-    mp_futures(env)
+    #env.update_parallel(env)
+    env.run()
     bench_mark(env)
     
